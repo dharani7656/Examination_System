@@ -41,6 +41,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 // 1. DATABASE & MONGOOSE SCHEMAS
 // ============================================================================
 let isMongoLive = false;
+let mongoConnectionError = null;
 
 // Fallback in-memory store so the app operates even prior to database connection
 const memoryStore = {
@@ -144,29 +145,61 @@ const Admin = mongoose.model('Admin', AdminSchema);
 const Question = mongoose.model('Question', QuestionSchema);
 const Submission = mongoose.model('Submission', SubmissionSchema);
 
-// Connect to MongoDB
-mongoose.connect(MONGO_URI)
-  .then(async () => {
+// Connection logic with strict diagnostics and auto-reconnect
+async function connectToDatabase() {
+  if (!process.env.MONGO_URI) {
+    console.warn('⚠️ [ExamMatrix Warning] No MONGO_URI detected in process.env! Running in volatile in-memory mode.');
+    mongoConnectionError = 'MONGO_URI environment variable is not defined in Render environment settings.';
+    return;
+  }
+
+  try {
+    console.log('🔄 Connecting to MongoDB Atlas...');
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 8000,
+      socketTimeoutMS: 45000,
+    });
     isMongoLive = true;
-    console.log('✓ Successfully connected to MongoDB Database');
+    mongoConnectionError = null;
+    console.log('✅ [ExamMatrix SUCCESS] Connected to MongoDB Atlas! Data will persist across all server restarts.');
     await seedMongoDefaults();
-  })
-  .catch((err) => {
+  } catch (err) {
     isMongoLive = false;
-    console.warn('! MongoDB connection failed (' + err.message + '). Operating in resilient standalone in-memory mode.');
-  });
+    mongoConnectionError = err.message;
+    console.error('❌ [ExamMatrix CRITICAL] MongoDB Atlas Connection FAILED: ' + err.message);
+    console.error('   👉 Probable causes:');
+    console.error('      1. IP Whitelist: Go to cloud.mongodb.com -> Network Access -> Add 0.0.0.0/0 (Allow from anywhere).');
+    console.error('      2. Bad Password: Password contains special characters like @, #, : without URL encoding.');
+    console.error('      3. Wrong DB User: The MongoDB Atlas user was not created under Database Access.');
+  }
+}
+
+connectToDatabase();
+
+mongoose.connection.on('disconnected', () => {
+  isMongoLive = false;
+  console.warn('⚠️ MongoDB connection dropped. Attempting reconnection...');
+});
+
+mongoose.connection.on('reconnected', () => {
+  isMongoLive = true;
+  console.log('✅ MongoDB connection restored.');
+});
 
 async function seedMongoDefaults() {
   try {
     const config = await ExamConfig.findOne();
-    if (!config) await ExamConfig.create(memoryStore.config);
+    if (!config) {
+      await ExamConfig.create(memoryStore.config);
+      console.log('✓ Initialized default exam configuration in MongoDB.');
+    }
 
     if (ADMIN_PASSWORD) {
       const admin = await Admin.findOne({ username: ADMIN_USERNAME });
       if (!admin) {
         const hash = await bcrypt.hash(ADMIN_PASSWORD, 10);
         await Admin.create({ username: ADMIN_USERNAME, passwordHash: hash });
-        console.log(`✓ Admin account initialized for username: ${ADMIN_USERNAME}`);
+        console.log(`✓ Admin account initialized in MongoDB for: ${ADMIN_USERNAME}`);
       }
     }
 
@@ -192,7 +225,9 @@ async function seedMongoDefaults() {
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
-    database: isMongoLive ? 'MongoDB Connected' : 'In-Memory Fallback',
+    isMongoLive,
+    database: isMongoLive ? 'MongoDB Atlas (Persistent)' : 'Volatile In-Memory (Will Reset on Restart)',
+    mongoError: mongoConnectionError,
     timestamp: new Date()
   });
 });
@@ -534,9 +569,10 @@ app.get('/', (req, res) => {
         </div>
         <div>
           <span class="text-xl font-bold tracking-tight text-slate-900">Exam<span class="text-blue-600">Matrix</span></span>
-          <span id="dbBadge" class="hidden sm:inline-block ml-2 text-xs font-mono uppercase bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded border border-emerald-200">
-            Node + Express Ready
-          </span>
+          <button onclick="checkDbHealth(true)" id="dbBadge" class="hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border transition cursor-pointer">
+            <span class="w-2 h-2 rounded-full animate-pulse"></span>
+            <span id="dbBadgeText">Checking DB...</span>
+          </button>
         </div>
       </div>
       <div id="authNavCluster" class="flex items-center gap-2"></div>
@@ -888,9 +924,36 @@ app.get('/', (req, res) => {
     };
 
     window.onload = async function() {
+      await checkDbHealth();
       await refreshData();
       renderNav();
     };
+
+    async function checkDbHealth(showModal = false) {
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        const badge = document.getElementById('dbBadge');
+        const badgeText = document.getElementById('dbBadgeText');
+        const dot = badge.querySelector('span');
+
+        if (data.isMongoLive) {
+          badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-300";
+          dot.className = "w-2 h-2 rounded-full bg-emerald-500";
+          badgeText.innerText = "MongoDB Live (Persistent)";
+          if (showModal) alert("✅ MongoDB Atlas is successfully connected! All data, students, and submissions persist permanently across restarts.");
+        } else {
+          badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300 animate-pulse";
+          dot.className = "w-2 h-2 rounded-full bg-rose-500";
+          badgeText.innerText = "DB Disconnected (RAM Mode)";
+          if (showModal) {
+            alert("⚠️ MongoDB is NOT connected! Data is only stored in RAM and will reset when Render sleeps.\n\nError: " + (data.mongoError || "No MONGO_URI provided in Render environment variables. Check Render dashboard!"));
+          }
+        }
+      } catch (e) {
+        console.error('Health check failed', e);
+      }
+    }
 
     async function refreshData() {
       try {

@@ -1,22 +1,14 @@
 /**
  * ============================================================================
- * EXAMMATRIX — UNIFIED SINGLE-FILE FULL-STACK APPLICATION
+ * EXAMMATRIX — UNIFIED SINGLE-FILE FULL-STACK APPLICATION (PRODUCTION READY)
  * ============================================================================
- * Everything (Backend Express REST API, Mongoose Models, Auto-Evaluator,
- * and the entire Frontend UI) is packaged in this ONE file.
+ * Everything (Backend Express API, MongoDB Mongoose Models, Auto-Evaluator,
+ * Faculty Grade Overrides, and the complete Frontend UI) is in this ONE file.
  *
- * HOW TO RUN:
- * 1. Ensure you have Node.js installed (v18+ recommended).
- * 2. In an empty directory, install the required packages:
- *      npm install express mongoose cors dotenv bcryptjs jsonwebtoken
- * 3. Run this file:
- *      node app.js
- * 4. Open in browser:
- *      http://localhost:5000
- *
- * TO CONNECT MONGODB ATLAS:
- * Set the environment variable MONGO_URI, or replace the default string below:
- *   const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://<user>:<password>@cluster0.mongodb.net/exammatrix?retryWrites=true&w=majority";
+ * HOW TO RUN LOCALLY:
+ * 1. npm install express mongoose cors dotenv bcryptjs jsonwebtoken
+ * 2. node app.js
+ * 3. Open http://localhost:5000 in your browser.
  * ============================================================================
  */
 
@@ -32,7 +24,7 @@ app.use(express.json());
 app.use(cors());
 
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/exammatrix_db';
+const MONGO_URI = process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_exammatrix_key_2026';
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
@@ -43,7 +35,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 let isMongoLive = false;
 let mongoConnectionError = null;
 
-// Fallback in-memory store so the app operates even prior to database connection
+// In-memory fallback in case MongoDB credentials are missing or being configured
 const memoryStore = {
   config: {
     title: 'Computer Science & Algorithmics Benchmark',
@@ -147,9 +139,9 @@ const Submission = mongoose.model('Submission', SubmissionSchema);
 
 // Connection logic with strict diagnostics and auto-reconnect
 async function connectToDatabase() {
-  if (!process.env.MONGO_URI) {
-    console.warn('⚠️ [ExamMatrix Warning] No MONGO_URI detected in process.env! Running in volatile in-memory mode.');
-    mongoConnectionError = 'MONGO_URI environment variable is not defined in Render environment settings.';
+  if (!MONGO_URI) {
+    console.warn('⚠️ [ExamMatrix] No MONGO_URI defined. Using temporary in-memory mode.');
+    mongoConnectionError = 'MONGO_URI is missing from environment variables.';
     return;
   }
 
@@ -161,16 +153,12 @@ async function connectToDatabase() {
     });
     isMongoLive = true;
     mongoConnectionError = null;
-    console.log('✅ [ExamMatrix SUCCESS] Connected to MongoDB Atlas! Data will persist across all server restarts.');
+    console.log('✅ [ExamMatrix SUCCESS] Connected to MongoDB Atlas! Data will persist permanently.');
     await seedMongoDefaults();
   } catch (err) {
     isMongoLive = false;
     mongoConnectionError = err.message;
     console.error('❌ [ExamMatrix CRITICAL] MongoDB Atlas Connection FAILED: ' + err.message);
-    console.error('   👉 Probable causes:');
-    console.error('      1. IP Whitelist: Go to cloud.mongodb.com -> Network Access -> Add 0.0.0.0/0 (Allow from anywhere).');
-    console.error('      2. Bad Password: Password contains special characters like @, #, : without URL encoding.');
-    console.error('      3. Wrong DB User: The MongoDB Atlas user was not created under Database Access.');
   }
 }
 
@@ -210,7 +198,7 @@ async function seedMongoDefaults() {
         delete copy._id;
         return copy;
       }));
-      console.log('✓ Seeded default questions bank into MongoDB.');
+      console.log('✓ Seeded initial questions bank into MongoDB.');
     }
   } catch (e) {
     console.error('Seed check warning:', e.message);
@@ -226,7 +214,7 @@ app.get('/api/health', (req, res) => {
   res.json({
     status: 'online',
     isMongoLive,
-    database: isMongoLive ? 'MongoDB Atlas (Persistent)' : 'Volatile In-Memory (Will Reset on Restart)',
+    database: isMongoLive ? 'MongoDB Atlas (Persistent)' : 'Temporary RAM Store',
     mongoError: mongoConnectionError,
     timestamp: new Date()
   });
@@ -283,7 +271,6 @@ app.post('/api/students/register', async (req, res) => {
       return res.status(201).json({ message: 'Registration complete', rollNumber: stu.rollNumber, name: stu.name });
     }
 
-    // In-memory fallback
     const existsMem = memoryStore.students.find(s => s.rollNumber === cleanRoll);
     if (existsMem) return res.status(400).json({ error: `Roll Number ${cleanRoll} is already registered.` });
 
@@ -410,14 +397,14 @@ app.post('/api/exams/submit', async (req, res) => {
           awarded = q.marks;
           remark = 'Correct MCQ selection';
         } else {
-          remark = `Incorrect. Expected Option #${q.correctOptionIndex + 1}`;
+          remark = 'Incorrect. Expected Option #' + (q.correctOptionIndex + 1);
         }
       } else if (q.type === 'theory') {
         const text = (ans || '').toLowerCase();
         const matches = (q.expectedKeywords || []).filter(kw => text.includes(kw.toLowerCase()));
         const ratio = (q.expectedKeywords && q.expectedKeywords.length > 0) ? (matches.length / q.expectedKeywords.length) : 0;
         awarded = Math.round(ratio * q.marks);
-        remark = `Matched keywords (${matches.length}/${q.expectedKeywords.length}): [${matches.join(', ')}]`;
+        remark = 'Matched keywords (' + matches.length + '/' + q.expectedKeywords.length + '): [' + matches.join(', ') + ']';
       } else if (q.type === 'programming') {
         let passed = 0;
         for (const tc of (q.testCases || [])) {
@@ -425,7 +412,7 @@ app.post('/api/exams/submit', async (req, res) => {
         }
         const ratio = (q.testCases && q.testCases.length > 0) ? (passed / q.testCases.length) : 0;
         awarded = Math.round(ratio * q.marks);
-        remark = `Passed ${passed} of ${q.testCases.length} automated test assertions`;
+        remark = 'Passed ' + passed + ' of ' + q.testCases.length + ' automated test assertions';
       }
 
       totalScore += awarded;
@@ -486,7 +473,6 @@ app.get('/api/submissions', async (req, res) => {
   res.json(memoryStore.submissions.map(s => ({ ...s, id: s._id || s.id })));
 });
 
-// Fetch single student submission details
 app.get('/api/submissions/student/:rollNumber', async (req, res) => {
   try {
     const cleanRoll = req.params.rollNumber.toUpperCase();
@@ -541,7 +527,7 @@ app.put('/api/submissions/:id/override', async (req, res) => {
 });
 
 // ============================================================================
-// 3. FRONTEND USER INTERFACE (SERVED ON ROOT GET /)
+// 3. COMPLETE FRONTEND INTERFACE (SERVED ON ROOT GET /)
 // ============================================================================
 app.get('/', (req, res) => {
   res.send(`<!DOCTYPE html>
@@ -908,9 +894,9 @@ app.get('/', (req, res) => {
     </div>
   </div>
 
-  <!-- CLIENT-SIDE SCRIPT -->
+  <!-- CLIENT-SIDE SCRIPT (CAREFULLY WRITTEN WITH NO SERVER TEMPLATE CONFLICTS) -->
   <script>
-    let appState = {
+    var appState = {
       config: { title: 'Computer Science & Algorithmics Benchmark', durationMinutes: 45, passPercentage: 40 },
       currentUser: null,
       authMode: 'login',
@@ -923,72 +909,70 @@ app.get('/', (req, res) => {
       activeStudentSubmission: null
     };
 
-    window.onload = async function() {
+    window.onload = function() {
       try {
-        await checkDbHealth();
-        await refreshData();
+        checkDbHealth();
+        refreshData();
         renderNav();
       } catch (err) {
         console.error("Initialization error:", err);
-        const badgeText = document.getElementById('dbBadgeText');
-        if (badgeText) badgeText.innerText = "Ready";
       }
     };
 
-    async function checkDbHealth(showModal = false) {
-      try {
-        const res = await fetch('/api/health');
-        const data = await res.json();
-        const badge = document.getElementById('dbBadge');
-        const badgeText = document.getElementById('dbBadgeText');
-        if (!badge || !badgeText) return;
-        const dot = badge.querySelector('span');
+    function checkDbHealth(showModal) {
+      fetch('/api/health')
+        .then(function(res) { return res.json(); })
+        .then(function(data) {
+          var badge = document.getElementById('dbBadge');
+          var badgeText = document.getElementById('dbBadgeText');
+          if (!badge || !badgeText) return;
+          var dot = badge.querySelector('span');
 
-        if (data.isMongoLive) {
-          badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-300";
-          if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-500";
-          badgeText.innerText = "MongoDB Live (Persistent)";
-          if (showModal) alert("MongoDB Atlas is successfully connected! All data, students, and submissions persist permanently across restarts.");
-        } else {
-          badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300 animate-pulse";
-          if (dot) dot.className = "w-2 h-2 rounded-full bg-rose-500";
-          badgeText.innerText = "DB Disconnected (RAM Mode)";
-          if (showModal) {
-            alert("MongoDB is NOT connected! Data is only stored in RAM and will reset when Render sleeps.\\n\\nError: " + (data.mongoError || "No MONGO_URI provided in Render environment variables. Check Render dashboard!"));
+          if (data.isMongoLive) {
+            badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-300";
+            if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-500";
+            badgeText.innerText = "MongoDB Live (Persistent)";
+            if (showModal) alert("MongoDB Atlas is successfully connected! All data, questions, and submissions persist permanently across restarts.");
+          } else {
+            badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300 animate-pulse";
+            if (dot) dot.className = "w-2 h-2 rounded-full bg-rose-500";
+            badgeText.innerText = "DB Disconnected (RAM Mode)";
+            if (showModal) {
+              alert("MongoDB is NOT connected! Data is temporarily stored in RAM and will reset when Render sleeps.\\n\\nError: " + (data.mongoError || "Check MONGO_URI in Render dashboard."));
+            }
           }
-        }
-      } catch (e) {
-        console.error('Health check failed', e);
-        const badgeText = document.getElementById('dbBadgeText');
-        if (badgeText) badgeText.innerText = "Offline Mode";
-      }
+        })
+        .catch(function(e) {
+          console.error('Health check failed', e);
+          var badgeText = document.getElementById('dbBadgeText');
+          if (badgeText) badgeText.innerText = "Offline Mode";
+        });
     }
 
-    async function refreshData() {
-      try {
-        const [cRes, qRes, sRes] = await Promise.all([
-          fetch('/api/exam/config').then(r => r.json()).catch(() => appState.config),
-          fetch('/api/questions').then(r => r.json()).catch(() => []),
-          fetch('/api/submissions').then(r => r.json()).catch(() => [])
-        ]);
-        if (cRes) appState.config = cRes;
-        if (Array.isArray(qRes)) appState.questions = qRes;
-        if (Array.isArray(sRes)) appState.submissions = sRes;
+    function refreshData() {
+      Promise.all([
+        fetch('/api/exam/config').then(function(r) { return r.json(); }).catch(function() { return appState.config; }),
+        fetch('/api/questions').then(function(r) { return r.json(); }).catch(function() { return []; }),
+        fetch('/api/submissions').then(function(r) { return r.json(); }).catch(function() { return []; })
+      ]).then(function(results) {
+        if (results[0]) appState.config = results[0];
+        if (Array.isArray(results[1])) appState.questions = results[1];
+        if (Array.isArray(results[2])) appState.submissions = results[2];
         updateMetrics();
         renderQuestionsTable();
         renderSubmissionsTable();
-      } catch (err) {
+      }).catch(function(err) {
         console.error('Data refresh error:', err);
-      }
+      });
     }
 
     function toggleModal(id) {
-      const el = document.getElementById(id);
+      var el = document.getElementById(id);
       if (el) el.classList.toggle('hidden');
     }
 
     function renderNav() {
-      const cluster = document.getElementById('authNavCluster');
+      var cluster = document.getElementById('authNavCluster');
       if (!cluster) return;
       if (appState.currentUser) {
         cluster.innerHTML = 
@@ -1004,10 +988,10 @@ app.get('/', (req, res) => {
     }
 
     function switchAuthTab(type) {
-      const studentTab = document.getElementById('tabStudentBtn');
-      const adminTab = document.getElementById('tabAdminBtn');
-      const studentForm = document.getElementById('studentAuthFormContainer');
-      const adminForm = document.getElementById('adminAuthFormContainer');
+      var studentTab = document.getElementById('tabStudentBtn');
+      var adminTab = document.getElementById('tabAdminBtn');
+      var studentForm = document.getElementById('studentAuthFormContainer');
+      var adminForm = document.getElementById('adminAuthFormContainer');
 
       if (type === 'student') {
         studentTab.className = "py-3.5 border-b-2 border-blue-600 text-blue-600 bg-white";
@@ -1024,10 +1008,10 @@ app.get('/', (req, res) => {
 
     function toggleStudentSubmode() {
       appState.authMode = appState.authMode === 'login' ? 'register' : 'login';
-      const nameBox = document.getElementById('nameFieldContainer');
-      const title = document.getElementById('studentAuthTitle');
-      const toggleBtn = document.getElementById('studentToggleModeBtn');
-      const submitBtn = document.getElementById('studentSubmitBtn');
+      var nameBox = document.getElementById('nameFieldContainer');
+      var title = document.getElementById('studentAuthTitle');
+      var toggleBtn = document.getElementById('studentToggleModeBtn');
+      var submitBtn = document.getElementById('studentSubmitBtn');
 
       if (appState.authMode === 'register') {
         nameBox.classList.remove('hidden');
@@ -1042,73 +1026,83 @@ app.get('/', (req, res) => {
       }
     }
 
-    async function handleStudentAuth(e) {
+    function handleStudentAuth(e) {
       e.preventDefault();
-      const rollNumber = document.getElementById('studentRollInput').value.trim();
-      const password = document.getElementById('studentPassInput').value;
-      const name = document.getElementById('studentNameInput').value.trim();
+      var rollNumber = document.getElementById('studentRollInput').value.trim();
+      var password = document.getElementById('studentPassInput').value;
+      var name = document.getElementById('studentNameInput').value.trim();
 
-      const url = appState.authMode === 'register' ? '/api/students/register' : '/api/students/login';
-      const res = await fetch(url, {
+      var url = appState.authMode === 'register' ? '/api/students/register' : '/api/students/login';
+      fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rollNumber, name, password })
+        body: JSON.stringify({ rollNumber: rollNumber, name: name, password: password })
+      })
+      .then(function(res) {
+        return res.json().then(function(data) {
+          return { ok: res.ok, data: data };
+        });
+      })
+      .then(function(result) {
+        if (!result.ok) {
+          var alertBox = document.getElementById('authAlert');
+          alertBox.className = "mb-4 p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200";
+          alertBox.innerText = result.data.error || 'Authentication failed';
+          alertBox.classList.remove('hidden');
+          return;
+        }
+
+        appState.currentUser = { role: 'student', rollNumber: result.data.rollNumber, name: result.data.name };
+        renderNav();
+        document.getElementById('authView').classList.add('hidden');
+        document.getElementById('studentDashboardView').classList.remove('hidden');
+        document.getElementById('studentWelcomeName').innerText = result.data.name;
+        document.getElementById('studentRollBadge').innerText = result.data.rollNumber;
+        document.getElementById('studentDashboardDuration').innerText = appState.config.durationMinutes;
+        document.getElementById('studentExamTitle').innerText = appState.config.title;
+        document.getElementById('examQCount').innerText = appState.questions.length;
+        document.getElementById('examTotalMarks').innerText = appState.questions.reduce(function(a, b) { return a + b.marks; }, 0);
+
+        checkStudentSubmission();
+      })
+      .catch(function(err) {
+        console.error(err);
       });
-      const data = await res.json();
-
-      if (!res.ok) {
-        const alertBox = document.getElementById('authAlert');
-        alertBox.className = "mb-4 p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-700 border border-rose-200";
-        alertBox.innerText = data.error || 'Authentication failed';
-        alertBox.classList.remove('hidden');
-        return;
-      }
-
-      appState.currentUser = { role: 'student', rollNumber: data.rollNumber, name: data.name };
-      renderNav();
-      document.getElementById('authView').classList.add('hidden');
-      document.getElementById('studentDashboardView').classList.remove('hidden');
-      document.getElementById('studentWelcomeName').innerText = data.name;
-      document.getElementById('studentRollBadge').innerText = data.rollNumber;
-      document.getElementById('studentDashboardDuration').innerText = appState.config.durationMinutes;
-      document.getElementById('studentExamTitle').innerText = appState.config.title;
-      document.getElementById('examQCount').innerText = appState.questions.length;
-      document.getElementById('examTotalMarks').innerText = appState.questions.reduce((a, b) => a + b.marks, 0);
-
-      await checkStudentSubmission();
     }
 
-    async function checkStudentSubmission() {
+    function checkStudentSubmission() {
       if (!appState.currentUser) return;
-      try {
-        const res = await fetch('/api/submissions/student/' + encodeURIComponent(appState.currentUser.rollNumber));
-        if (res.ok) {
-          const sub = await res.json();
-          appState.activeStudentSubmission = sub;
-          const scoreEl = document.getElementById('studentLatestScoreDisplay');
-          const remarkEl = document.getElementById('studentResultRemark');
-          const feedbackBtn = document.getElementById('viewFeedbackBtn');
-          if (scoreEl) scoreEl.innerText = sub.totalScore + ' / ' + sub.maxScore;
-          if (remarkEl) {
-            remarkEl.innerHTML = '<span class="font-bold ' + (sub.status === 'Faculty-Reviewed' ? 'text-indigo-600' : 'text-emerald-600') + '">Status: ' + sub.status + '</span>';
+      fetch('/api/submissions/student/' + encodeURIComponent(appState.currentUser.rollNumber))
+        .then(function(res) {
+          if (res.ok) {
+            return res.json().then(function(sub) {
+              appState.activeStudentSubmission = sub;
+              var scoreEl = document.getElementById('studentLatestScoreDisplay');
+              var remarkEl = document.getElementById('studentResultRemark');
+              var feedbackBtn = document.getElementById('viewFeedbackBtn');
+              if (scoreEl) scoreEl.innerText = sub.totalScore + ' / ' + sub.maxScore;
+              if (remarkEl) {
+                remarkEl.innerHTML = '<span class="font-bold ' + (sub.status === 'Faculty-Reviewed' ? 'text-indigo-600' : 'text-emerald-600') + '">Status: ' + sub.status + '</span>';
+              }
+              if (feedbackBtn) feedbackBtn.classList.remove('hidden');
+            });
+          } else {
+            var feedbackBtn = document.getElementById('viewFeedbackBtn');
+            if (feedbackBtn) feedbackBtn.classList.add('hidden');
           }
-          if (feedbackBtn) feedbackBtn.classList.remove('hidden');
-        } else {
-          const feedbackBtn = document.getElementById('viewFeedbackBtn');
-          if (feedbackBtn) feedbackBtn.classList.add('hidden');
-        }
-      } catch (e) {}
+        })
+        .catch(function() {});
     }
 
     function openStudentFeedbackModal() {
-      const sub = appState.activeStudentSubmission;
+      var sub = appState.activeStudentSubmission;
       if (!sub) return;
-      const container = document.getElementById('studentFeedbackContent');
+      var container = document.getElementById('studentFeedbackContent');
       if (!container) return;
       container.innerHTML = '';
 
-      (sub.breakdown || []).forEach((item, idx) => {
-        const hasFeedback = Boolean(item.facultyFeedback && item.facultyFeedback.trim());
+      (sub.breakdown || []).forEach(function(item, idx) {
+        var hasFeedback = Boolean(item.facultyFeedback && item.facultyFeedback.trim());
         container.innerHTML += 
           '<div class="p-4 bg-slate-50 border rounded-xl space-y-2 text-xs">' +
             '<div class="flex justify-between items-center">' +
@@ -1130,28 +1124,36 @@ app.get('/', (req, res) => {
       toggleModal('studentFeedbackModal');
     }
 
-    async function handleAdminAuth(e) {
+    function handleAdminAuth(e) {
       e.preventDefault();
-      const username = document.getElementById('adminUserInput').value.trim();
-      const password = document.getElementById('adminPassInput').value.trim();
+      var username = document.getElementById('adminUserInput').value.trim();
+      var password = document.getElementById('adminPassInput').value.trim();
 
-      const res = await fetch('/api/admin/login', {
+      fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify({ username: username, password: password })
+      })
+      .then(function(res) {
+        return res.json().then(function(data) {
+          return { ok: res.ok, data: data };
+        });
+      })
+      .then(function(result) {
+        if (!result.ok) {
+          alert(result.data.error || 'Invalid Admin Credentials');
+          return;
+        }
+
+        appState.currentUser = { role: 'admin', username: result.data.username, rollNumber: 'ADMIN', name: 'Faculty Administrator' };
+        renderNav();
+        document.getElementById('authView').classList.add('hidden');
+        document.getElementById('adminDashboardView').classList.remove('hidden');
+        refreshData();
+      })
+      .catch(function(err) {
+        console.error(err);
       });
-      const data = await res.json();
-
-      if (!res.ok) {
-        alert(data.error || 'Invalid Admin Credentials');
-        return;
-      }
-
-      appState.currentUser = { role: 'admin', username: data.username, rollNumber: 'ADMIN', name: 'Faculty Administrator' };
-      renderNav();
-      document.getElementById('authView').classList.add('hidden');
-      document.getElementById('adminDashboardView').classList.remove('hidden');
-      await refreshData();
     }
 
     function logout() {
@@ -1173,13 +1175,13 @@ app.get('/', (req, res) => {
       appState.currentQIndex = 0;
       appState.answers = {};
 
-      let timeLeft = appState.config.durationMinutes * 60;
+      var timeLeft = appState.config.durationMinutes * 60;
       clearInterval(appState.timer);
-      appState.timer = setInterval(() => {
+      appState.timer = setInterval(function() {
         timeLeft--;
-        const m = Math.floor(timeLeft / 60);
-        const s = timeLeft % 60;
-        document.getElementById('examTimer').innerText = \`\${m.toString().padStart(2, '0')}:\${s.toString().padStart(2, '0')}\`;
+        var m = Math.floor(timeLeft / 60);
+        var s = timeLeft % 60;
+        document.getElementById('examTimer').innerText = m.toString().padStart(2, '0') + ':' + s.toString().padStart(2, '0');
         if (timeLeft <= 0) {
           clearInterval(appState.timer);
           finishAndSubmitExam();
@@ -1191,42 +1193,42 @@ app.get('/', (req, res) => {
     }
 
     function renderPallet() {
-      const grid = document.getElementById('palletGrid');
+      var grid = document.getElementById('palletGrid');
       if (!grid) return;
       grid.innerHTML = '';
-      appState.questions.forEach((q, idx) => {
-        const isAnswered = appState.answers[q.id || q._id] !== undefined && appState.answers[q.id || q._id] !== '';
-        const btn = document.createElement('button');
+      appState.questions.forEach(function(q, idx) {
+        var isAnswered = appState.answers[q.id || q._id] !== undefined && appState.answers[q.id || q._id] !== '';
+        var btn = document.createElement('button');
         btn.className = 'w-10 h-10 rounded-lg text-xs font-mono font-bold ' + (isAnswered ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700');
         btn.innerText = idx + 1;
-        btn.onclick = () => { saveCurrentResponse(); loadArenaQuestion(idx); };
+        btn.onclick = function() { saveCurrentResponse(); loadArenaQuestion(idx); };
         grid.appendChild(btn);
       });
-      const ratioEl = document.getElementById('answeredRatio');
+      var ratioEl = document.getElementById('answeredRatio');
       if (ratioEl) ratioEl.innerText = Object.keys(appState.answers).length + ' / ' + appState.questions.length;
     }
 
     function loadArenaQuestion(idx) {
       appState.currentQIndex = idx;
-      const q = appState.questions[idx];
+      var q = appState.questions[idx];
       if (!q) return;
-      const qId = q.id || q._id;
-      const headEl = document.getElementById('qNumberHeading');
-      const badgeEl = document.getElementById('qMarksBadge');
-      const promptEl = document.getElementById('qPrompt');
+      var qId = q.id || q._id;
+      var headEl = document.getElementById('qNumberHeading');
+      var badgeEl = document.getElementById('qMarksBadge');
+      var promptEl = document.getElementById('qPrompt');
       if (headEl) headEl.innerText = 'Question ' + (idx + 1) + ' of ' + appState.questions.length;
       if (badgeEl) badgeEl.innerText = q.marks + ' Marks';
       if (promptEl) promptEl.innerText = q.prompt;
 
-      const zone = document.getElementById('interactiveAnswerZone');
+      var zone = document.getElementById('interactiveAnswerZone');
       if (!zone) return;
       zone.innerHTML = '';
-      const existing = appState.answers[qId] || '';
+      var existing = appState.answers[qId] || '';
 
       if (q.type === 'mcq') {
-        const div = document.createElement('div');
+        var div = document.createElement('div');
         div.className = 'space-y-2';
-        (q.options || []).forEach((opt, oIdx) => {
+        (q.options || []).forEach(function(opt, oIdx) {
           div.innerHTML += 
             '<label class="flex items-center gap-3 p-3 rounded-lg border text-xs cursor-pointer hover:bg-slate-50">' +
               '<input type="radio" name="opt" value="' + oIdx + '" ' + (existing == oIdx ? 'checked' : '') + ' onchange="appState.answers[\'' + qId + '\'] = \'' + oIdx + '\'; renderPallet();">' +
@@ -1244,30 +1246,30 @@ app.get('/', (req, res) => {
     }
 
     function saveCurrentResponse() {
-      const q = appState.questions[appState.currentQIndex];
+      var q = appState.questions[appState.currentQIndex];
       if (!q) return;
-      const qId = q.id || q._id;
+      var qId = q.id || q._id;
       if (q.type === 'theory') {
-        const el = document.getElementById('arenaTheoryText');
+        var el = document.getElementById('arenaTheoryText');
         if (el) appState.answers[qId] = el.value;
       } else if (q.type === 'programming') {
-        const el = document.getElementById('arenaCodeText');
-        if (el) appState.answers[qId] = el.value;
+        var el2 = document.getElementById('arenaCodeText');
+        if (el2) appState.answers[qId] = el2.value;
       }
       renderPallet();
     }
 
     function navigateQuestion(step) {
       saveCurrentResponse();
-      const target = appState.currentQIndex + step;
+      var target = appState.currentQIndex + step;
       if (target >= 0 && target < appState.questions.length) loadArenaQuestion(target);
     }
 
-    async function finishAndSubmitExam() {
+    function finishAndSubmitExam() {
       saveCurrentResponse();
       clearInterval(appState.timer);
 
-      const res = await fetch('/api/exams/submit', {
+      fetch('/api/exams/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1275,13 +1277,18 @@ app.get('/', (req, res) => {
           studentName: appState.currentUser.name,
           responses: appState.answers
         })
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        refreshData();
+        alert('Exam submitted! Score: ' + data.submission.totalScore + ' / ' + data.submission.maxScore);
+        document.getElementById('examArenaView').classList.add('hidden');
+        document.getElementById('studentDashboardView').classList.remove('hidden');
+        checkStudentSubmission();
+      })
+      .catch(function(err) {
+        console.error(err);
       });
-      const data = await res.json();
-      await refreshData();
-      alert('Exam submitted! Score: ' + data.submission.totalScore + ' / ' + data.submission.maxScore);
-      document.getElementById('examArenaView').classList.add('hidden');
-      document.getElementById('studentDashboardView').classList.remove('hidden');
-      await checkStudentSubmission();
     }
 
     function openExamSettingsModal() {
@@ -1290,21 +1297,23 @@ app.get('/', (req, res) => {
       toggleModal('examSettingsModal');
     }
 
-    async function handleSaveExamSettings(e) {
+    function handleSaveExamSettings(e) {
       e.preventDefault();
-      const title = document.getElementById('settingExamTitle').value;
-      const durationMinutes = Number(document.getElementById('settingExamDuration').value);
+      var title = document.getElementById('settingExamTitle').value;
+      var durationMinutes = Number(document.getElementById('settingExamDuration').value);
 
-      const res = await fetch('/api/exam/config', {
+      fetch('/api/exam/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title, durationMinutes })
+        body: JSON.stringify({ title: title, durationMinutes: durationMinutes })
+      })
+      .then(function(res) { return res.json(); })
+      .then(function(data) {
+        appState.config = data.config;
+        toggleModal('examSettingsModal');
+        updateMetrics();
+        alert('Exam settings saved.');
       });
-      const data = await res.json();
-      appState.config = data.config;
-      toggleModal('examSettingsModal');
-      updateMetrics();
-      alert('Exam settings saved.');
     }
 
     function openQuestionModal() {
@@ -1313,8 +1322,8 @@ app.get('/', (req, res) => {
     }
 
     function renderQuestionTypeFields() {
-      const type = document.getElementById('newQType').value;
-      const zone = document.getElementById('dynamicQConfigZone');
+      var type = document.getElementById('newQType').value;
+      var zone = document.getElementById('dynamicQConfigZone');
       if (!zone) return;
       if (type === 'mcq') {
         zone.innerHTML = 
@@ -1340,13 +1349,13 @@ app.get('/', (req, res) => {
       }
     }
 
-    async function handleCreateQuestion(e) {
+    function handleCreateQuestion(e) {
       e.preventDefault();
-      const type = document.getElementById('newQType').value;
-      const marks = Number(document.getElementById('newQMarks').value);
-      const prompt = document.getElementById('newQPrompt').value.trim();
+      var type = document.getElementById('newQType').value;
+      var marks = Number(document.getElementById('newQMarks').value);
+      var prompt = document.getElementById('newQPrompt').value.trim();
 
-      const payload = { type, marks, prompt };
+      var payload = { type: type, marks: marks, prompt: prompt };
       if (type === 'mcq') {
         payload.options = [
           document.getElementById('opt0').value,
@@ -1356,7 +1365,7 @@ app.get('/', (req, res) => {
         ];
         payload.correctOptionIndex = Number(document.getElementById('correctIdx').value);
       } else if (type === 'theory') {
-        payload.expectedKeywords = document.getElementById('theoryKw').value.split(',').map(s => s.trim());
+        payload.expectedKeywords = document.getElementById('theoryKw').value.split(',').map(function(s) { return s.trim(); });
       } else {
         payload.testCases = [{
           input: document.getElementById('tcInput').value,
@@ -1364,18 +1373,20 @@ app.get('/', (req, res) => {
         }];
       }
 
-      await fetch('/api/questions', {
+      fetch('/api/questions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
+      }).then(function() {
+        toggleModal('questionModal');
+        refreshData();
       });
-      toggleModal('questionModal');
-      await refreshData();
     }
 
-    async function deleteQuestion(id) {
-      await fetch('/api/questions/' + id, { method: 'DELETE' });
-      await refreshData();
+    function deleteQuestion(id) {
+      fetch('/api/questions/' + id, { method: 'DELETE' }).then(function() {
+        refreshData();
+      });
     }
 
     function switchAdminTab(t) {
@@ -1384,22 +1395,22 @@ app.get('/', (req, res) => {
     }
 
     function updateMetrics() {
-      const qEl = document.getElementById('adminMetricQCount');
+      var qEl = document.getElementById('adminMetricQCount');
       if (qEl) qEl.innerText = appState.questions.length;
 
-      const durEl = document.getElementById('adminMetricDuration');
+      var durEl = document.getElementById('adminMetricDuration');
       if (durEl) durEl.innerText = appState.config.durationMinutes + ' Mins';
 
-      const subEl = document.getElementById('adminMetricSubmissions');
+      var subEl = document.getElementById('adminMetricSubmissions');
       if (subEl) subEl.innerText = appState.submissions.length;
     }
 
     function renderQuestionsTable() {
-      const tb = document.getElementById('adminQuestionsTableBody');
+      var tb = document.getElementById('adminQuestionsTableBody');
       if (!tb) return;
       tb.innerHTML = '';
-      appState.questions.forEach((q, i) => {
-        const id = q.id || q._id;
+      appState.questions.forEach(function(q, i) {
+        var id = q.id || q._id;
         tb.innerHTML += 
           '<tr>' +
             '<td class="py-2.5 font-mono">' + (i + 1) + '</td>' +
@@ -1414,11 +1425,11 @@ app.get('/', (req, res) => {
     }
 
     function renderSubmissionsTable() {
-      const tb = document.getElementById('adminSubmissionsTableBody');
+      var tb = document.getElementById('adminSubmissionsTableBody');
       if (!tb) return;
       tb.innerHTML = '';
-      appState.submissions.forEach(sub => {
-        const id = sub.id || sub._id;
+      appState.submissions.forEach(function(sub) {
+        var id = sub.id || sub._id;
         tb.innerHTML += 
           '<tr>' +
             '<td class="py-2.5 font-mono font-bold">' + sub.rollNumber + '</td>' +
@@ -1436,13 +1447,13 @@ app.get('/', (req, res) => {
 
     function openAuditModal(subId) {
       appState.activeSubId = subId;
-      const sub = appState.submissions.find(s => (s.id || s._id).toString() === subId.toString());
+      var sub = appState.submissions.find(function(s) { return (s.id || s._id).toString() === subId.toString(); });
       if (!sub) return;
 
-      const container = document.getElementById('auditQuestionsContainer');
+      var container = document.getElementById('auditQuestionsContainer');
       if (!container) return;
       container.innerHTML = '';
-      (sub.breakdown || []).forEach((item, idx) => {
+      (sub.breakdown || []).forEach(function(item, idx) {
         container.innerHTML += 
           '<div class="p-3 bg-slate-50 border rounded-xl space-y-2 text-xs">' +
             '<div class="flex justify-between items-center">' +
@@ -1466,28 +1477,41 @@ app.get('/', (req, res) => {
       toggleModal('submissionAuditModal');
     }
 
-    async function saveManualGrades() {
-      const sub = appState.submissions.find(s => (s.id || s._id).toString() === appState.activeSubId.toString());
+    function saveManualGrades() {
+      var sub = appState.submissions.find(function(s) { return (s.id || s._id).toString() === appState.activeSubId.toString(); });
       if (!sub) return;
 
-      const breakdown = sub.breakdown.map((item, idx) => {
-        const m = document.getElementById('auditMark_' + idx);
-        const f = document.getElementById('auditFeed_' + idx);
+      var breakdown = sub.breakdown.map(function(item, idx) {
+        var m = document.getElementById('auditMark_' + idx);
+        var f = document.getElementById('auditFeed_' + idx);
         return {
-          ...item,
+          questionId: item.questionId,
+          prompt: item.prompt,
+          type: item.type,
+          studentAnswer: item.studentAnswer,
+          autoScore: item.autoScore,
+          maxMarks: item.maxMarks,
+          remark: item.remark,
           awardedMarks: m ? Number(m.value) : item.awardedMarks,
-          facultyFeedback: f ? f.value : item.facultyFeedback
+          facultyFeedback: f ? f.value : item.facultyFeedback,
+          isOverridden: true
         };
       });
 
-      await fetch('/api/submissions/' + appState.activeSubId + '/override', {
+      fetch('/api/submissions/' + appState.activeSubId + '/override', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ breakdown })
+        body: JSON.stringify({ breakdown: breakdown })
+      })
+      .then(function(res) { return res.json(); })
+      .then(function() {
+        toggleModal('submissionAuditModal');
+        refreshData();
+        alert('Feedback and score adjustments saved successfully.');
+      })
+      .catch(function(err) {
+        console.error(err);
       });
-      toggleModal('submissionAuditModal');
-      await refreshData();
-      alert('Feedback and score adjustments saved successfully.');
     }
   </script>
 </body>
@@ -1498,9 +1522,9 @@ app.get('/', (req, res) => {
 // 4. SERVER LISTENER
 // ============================================================================
 app.listen(PORT, () => {
-  console.log(`====================================================`);
-  console.log(`✓ ExamMatrix single-file server running on port ${PORT}`);
-  console.log(`✓ Web Interface: http://localhost:${PORT}`);
-  console.log(`✓ Admin User:    ${ADMIN_USERNAME}`);
-  console.log(`====================================================`);
+  console.log('====================================================');
+  console.log('✓ ExamMatrix single-file server running on port ' + PORT);
+  console.log('✓ Web Interface: http://localhost:' + PORT);
+  console.log('✓ Admin User:    ' + ADMIN_USERNAME);
+  console.log('====================================================');
 });

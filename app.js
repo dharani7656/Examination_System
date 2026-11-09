@@ -924,9 +924,15 @@ app.get('/', (req, res) => {
     };
 
     window.onload = async function() {
-      await checkDbHealth();
-      await refreshData();
-      renderNav();
+      try {
+        await checkDbHealth();
+        await refreshData();
+        renderNav();
+      } catch (err) {
+        console.error("Initialization error:", err);
+        const badgeText = document.getElementById('dbBadgeText');
+        if (badgeText) badgeText.innerText = "Ready";
+      }
     };
 
     async function checkDbHealth(showModal = false) {
@@ -935,36 +941,39 @@ app.get('/', (req, res) => {
         const data = await res.json();
         const badge = document.getElementById('dbBadge');
         const badgeText = document.getElementById('dbBadgeText');
+        if (!badge || !badgeText) return;
         const dot = badge.querySelector('span');
 
         if (data.isMongoLive) {
           badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-300";
-          dot.className = "w-2 h-2 rounded-full bg-emerald-500";
+          if (dot) dot.className = "w-2 h-2 rounded-full bg-emerald-500";
           badgeText.innerText = "MongoDB Live (Persistent)";
-          if (showModal) alert("✅ MongoDB Atlas is successfully connected! All data, students, and submissions persist permanently across restarts.");
+          if (showModal) alert("MongoDB Atlas is successfully connected! All data, students, and submissions persist permanently across restarts.");
         } else {
           badge.className = "hidden sm:inline-flex items-center gap-1.5 ml-2 text-xs font-mono uppercase px-2.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-300 animate-pulse";
-          dot.className = "w-2 h-2 rounded-full bg-rose-500";
+          if (dot) dot.className = "w-2 h-2 rounded-full bg-rose-500";
           badgeText.innerText = "DB Disconnected (RAM Mode)";
           if (showModal) {
-            alert("⚠️ MongoDB is NOT connected! Data is only stored in RAM and will reset when Render sleeps.\n\nError: " + (data.mongoError || "No MONGO_URI provided in Render environment variables. Check Render dashboard!"));
+            alert("MongoDB is NOT connected! Data is only stored in RAM and will reset when Render sleeps.\\n\\nError: " + (data.mongoError || "No MONGO_URI provided in Render environment variables. Check Render dashboard!"));
           }
         }
       } catch (e) {
         console.error('Health check failed', e);
+        const badgeText = document.getElementById('dbBadgeText');
+        if (badgeText) badgeText.innerText = "Offline Mode";
       }
     }
 
     async function refreshData() {
       try {
         const [cRes, qRes, sRes] = await Promise.all([
-          fetch('/api/exam/config').then(r => r.json()),
-          fetch('/api/questions').then(r => r.json()),
-          fetch('/api/submissions').then(r => r.json())
+          fetch('/api/exam/config').then(r => r.json()).catch(() => appState.config),
+          fetch('/api/questions').then(r => r.json()).catch(() => []),
+          fetch('/api/submissions').then(r => r.json()).catch(() => [])
         ]);
-        appState.config = cRes;
-        appState.questions = qRes;
-        appState.submissions = sRes;
+        if (cRes) appState.config = cRes;
+        if (Array.isArray(qRes)) appState.questions = qRes;
+        if (Array.isArray(sRes)) appState.submissions = sRes;
         updateMetrics();
         renderQuestionsTable();
         renderSubmissionsTable();
@@ -974,20 +983,21 @@ app.get('/', (req, res) => {
     }
 
     function toggleModal(id) {
-      document.getElementById(id).classList.toggle('hidden');
+      const el = document.getElementById(id);
+      if (el) el.classList.toggle('hidden');
     }
 
     function renderNav() {
       const cluster = document.getElementById('authNavCluster');
+      if (!cluster) return;
       if (appState.currentUser) {
-        cluster.innerHTML = \`
-          <span class="text-xs font-mono font-bold px-2.5 py-1 rounded bg-slate-100 text-slate-700">
-            \${appState.currentUser.name} (\${appState.currentUser.rollNumber})
-          </span>
-          <button onclick="logout()" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-600 hover:bg-rose-100">
-            Sign Out
-          </button>
-        \`;
+        cluster.innerHTML = 
+          '<span class="text-xs font-mono font-bold px-2.5 py-1 rounded bg-slate-100 text-slate-700">' +
+            appState.currentUser.name + ' (' + appState.currentUser.rollNumber + ')' +
+          '</span>' +
+          '<button onclick="logout()" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-600 hover:bg-rose-100">' +
+            'Sign Out' +
+          '</button>';
       } else {
         cluster.innerHTML = '';
       }
@@ -1071,17 +1081,21 @@ app.get('/', (req, res) => {
     async function checkStudentSubmission() {
       if (!appState.currentUser) return;
       try {
-        const res = await fetch('/api/submissions/student/' + appState.currentUser.rollNumber);
+        const res = await fetch('/api/submissions/student/' + encodeURIComponent(appState.currentUser.rollNumber));
         if (res.ok) {
           const sub = await res.json();
           appState.activeStudentSubmission = sub;
-          document.getElementById('studentLatestScoreDisplay').innerText = \`\${sub.totalScore} / \${sub.maxScore}\`;
-          document.getElementById('studentResultRemark').innerHTML = \`
-            <span class="font-bold \${sub.status === 'Faculty-Reviewed' ? 'text-indigo-600' : 'text-emerald-600'}">Status: \${sub.status}</span>
-          \`;
-          document.getElementById('viewFeedbackBtn').classList.remove('hidden');
+          const scoreEl = document.getElementById('studentLatestScoreDisplay');
+          const remarkEl = document.getElementById('studentResultRemark');
+          const feedbackBtn = document.getElementById('viewFeedbackBtn');
+          if (scoreEl) scoreEl.innerText = sub.totalScore + ' / ' + sub.maxScore;
+          if (remarkEl) {
+            remarkEl.innerHTML = '<span class="font-bold ' + (sub.status === 'Faculty-Reviewed' ? 'text-indigo-600' : 'text-emerald-600') + '">Status: ' + sub.status + '</span>';
+          }
+          if (feedbackBtn) feedbackBtn.classList.remove('hidden');
         } else {
-          document.getElementById('viewFeedbackBtn').classList.add('hidden');
+          const feedbackBtn = document.getElementById('viewFeedbackBtn');
+          if (feedbackBtn) feedbackBtn.classList.add('hidden');
         }
       } catch (e) {}
     }
@@ -1090,28 +1104,28 @@ app.get('/', (req, res) => {
       const sub = appState.activeStudentSubmission;
       if (!sub) return;
       const container = document.getElementById('studentFeedbackContent');
+      if (!container) return;
       container.innerHTML = '';
 
       (sub.breakdown || []).forEach((item, idx) => {
         const hasFeedback = Boolean(item.facultyFeedback && item.facultyFeedback.trim());
-        container.innerHTML += \`
-          <div class="p-4 bg-slate-50 border rounded-xl space-y-2 text-xs">
-            <div class="flex justify-between items-center">
-              <span class="font-bold text-slate-800">Question \${idx + 1}: \${item.prompt}</span>
-              <span class="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
-                Awarded: \${item.awardedMarks} / \${item.maxMarks}
-              </span>
-            </div>
-            <div class="p-2.5 bg-white rounded border">
-              <span class="text-slate-400 block text-[10px] uppercase font-bold mb-1">Your Submitted Answer:</span>
-              <pre class="font-mono text-xs whitespace-pre-wrap text-slate-700">\${item.studentAnswer || '(No answer provided)'}</pre>
-            </div>
-            <div class="p-2.5 bg-indigo-50/70 border border-indigo-100 rounded">
-              <span class="text-indigo-600 font-bold block text-[10px] uppercase mb-0.5"><i class="fa-solid fa-comment-dots mr-1"></i> Teacher Feedback & Observations:</span>
-              <p class="text-xs text-indigo-900">\${hasFeedback ? item.facultyFeedback : '<em>No specific teacher remarks added yet.</em>'}</p>
-            </div>
-          </div>
-        \`;
+        container.innerHTML += 
+          '<div class="p-4 bg-slate-50 border rounded-xl space-y-2 text-xs">' +
+            '<div class="flex justify-between items-center">' +
+              '<span class="font-bold text-slate-800">Question ' + (idx + 1) + ': ' + (item.prompt || '') + '</span>' +
+              '<span class="font-mono font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">' +
+                'Awarded: ' + item.awardedMarks + ' / ' + item.maxMarks +
+              '</span>' +
+            '</div>' +
+            '<div class="p-2.5 bg-white rounded border">' +
+              '<span class="text-slate-400 block text-[10px] uppercase font-bold mb-1">Your Submitted Answer:</span>' +
+              '<pre class="font-mono text-xs whitespace-pre-wrap text-slate-700">' + (item.studentAnswer || '(No answer provided)') + '</pre>' +
+            '</div>' +
+            '<div class="p-2.5 bg-indigo-50/70 border border-indigo-100 rounded">' +
+              '<span class="text-indigo-600 font-bold block text-[10px] uppercase mb-0.5"><i class="fa-solid fa-comment-dots mr-1"></i> Teacher Feedback & Observations:</span>' +
+              '<p class="text-xs text-indigo-900">' + (hasFeedback ? item.facultyFeedback : '<em>No specific teacher remarks added yet.</em>') + '</p>' +
+            '</div>' +
+          '</div>';
       });
       toggleModal('studentFeedbackModal');
     }
@@ -1178,27 +1192,34 @@ app.get('/', (req, res) => {
 
     function renderPallet() {
       const grid = document.getElementById('palletGrid');
+      if (!grid) return;
       grid.innerHTML = '';
       appState.questions.forEach((q, idx) => {
         const isAnswered = appState.answers[q.id || q._id] !== undefined && appState.answers[q.id || q._id] !== '';
         const btn = document.createElement('button');
-        btn.className = \`w-10 h-10 rounded-lg text-xs font-mono font-bold \${isAnswered ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'}\`;
+        btn.className = 'w-10 h-10 rounded-lg text-xs font-mono font-bold ' + (isAnswered ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700');
         btn.innerText = idx + 1;
         btn.onclick = () => { saveCurrentResponse(); loadArenaQuestion(idx); };
         grid.appendChild(btn);
       });
-      document.getElementById('answeredRatio').innerText = \`\${Object.keys(appState.answers).length} / \${appState.questions.length}\`;
+      const ratioEl = document.getElementById('answeredRatio');
+      if (ratioEl) ratioEl.innerText = Object.keys(appState.answers).length + ' / ' + appState.questions.length;
     }
 
     function loadArenaQuestion(idx) {
       appState.currentQIndex = idx;
       const q = appState.questions[idx];
+      if (!q) return;
       const qId = q.id || q._id;
-      document.getElementById('qNumberHeading').innerText = \`Question \${idx + 1} of \${appState.questions.length}\`;
-      document.getElementById('qMarksBadge').innerText = \`\${q.marks} Marks\`;
-      document.getElementById('qPrompt').innerText = q.prompt;
+      const headEl = document.getElementById('qNumberHeading');
+      const badgeEl = document.getElementById('qMarksBadge');
+      const promptEl = document.getElementById('qPrompt');
+      if (headEl) headEl.innerText = 'Question ' + (idx + 1) + ' of ' + appState.questions.length;
+      if (badgeEl) badgeEl.innerText = q.marks + ' Marks';
+      if (promptEl) promptEl.innerText = q.prompt;
 
       const zone = document.getElementById('interactiveAnswerZone');
+      if (!zone) return;
       zone.innerHTML = '';
       const existing = appState.answers[qId] || '';
 
@@ -1206,22 +1227,19 @@ app.get('/', (req, res) => {
         const div = document.createElement('div');
         div.className = 'space-y-2';
         (q.options || []).forEach((opt, oIdx) => {
-          div.innerHTML += \`
-            <label class="flex items-center gap-3 p-3 rounded-lg border text-xs cursor-pointer hover:bg-slate-50">
-              <input type="radio" name="opt" value="\${oIdx}" \${existing == oIdx ? 'checked' : ''} onchange="appState.answers['\${qId}'] = '\${oIdx}'; renderPallet();">
-              <span>\${opt}</span>
-            </label>
-          \`;
+          div.innerHTML += 
+            '<label class="flex items-center gap-3 p-3 rounded-lg border text-xs cursor-pointer hover:bg-slate-50">' +
+              '<input type="radio" name="opt" value="' + oIdx + '" ' + (existing == oIdx ? 'checked' : '') + ' onchange="appState.answers[\'' + qId + '\'] = \'' + oIdx + '\'; renderPallet();">' +
+              '<span>' + opt + '</span>' +
+            '</label>';
         });
         zone.appendChild(div);
       } else if (q.type === 'theory') {
-        zone.innerHTML = \`
-          <textarea id="arenaTheoryText" rows="6" oninput="appState.answers['\${qId}'] = this.value; renderPallet();" class="w-full text-xs p-3 border rounded-xl" placeholder="Explain your answer here...">\${existing}</textarea>
-        \`;
+        zone.innerHTML = 
+          '<textarea id="arenaTheoryText" rows="6" oninput="appState.answers[\'' + qId + '\'] = this.value; renderPallet();" class="w-full text-xs p-3 border rounded-xl" placeholder="Explain your answer here...">' + existing + '</textarea>';
       } else {
-        zone.innerHTML = \`
-          <textarea id="arenaCodeText" rows="8" oninput="appState.answers['\${qId}'] = this.value; renderPallet();" class="w-full text-xs font-mono bg-slate-900 text-emerald-400 p-3 rounded-xl">\${existing || q.starterCode || ''}</textarea>
-        \`;
+        zone.innerHTML = 
+          '<textarea id="arenaCodeText" rows="8" oninput="appState.answers[\'' + qId + '\'] = this.value; renderPallet();" class="w-full text-xs font-mono bg-slate-900 text-emerald-400 p-3 rounded-xl">' + (existing || q.starterCode || '') + '</textarea>';
       }
     }
 
@@ -1260,7 +1278,7 @@ app.get('/', (req, res) => {
       });
       const data = await res.json();
       await refreshData();
-      alert(\`Exam submitted! Score: \${data.submission.totalScore} / \${data.submission.maxScore}\`);
+      alert('Exam submitted! Score: ' + data.submission.totalScore + ' / ' + data.submission.maxScore);
       document.getElementById('examArenaView').classList.add('hidden');
       document.getElementById('studentDashboardView').classList.remove('hidden');
       await checkStudentSubmission();
@@ -1297,30 +1315,28 @@ app.get('/', (req, res) => {
     function renderQuestionTypeFields() {
       const type = document.getElementById('newQType').value;
       const zone = document.getElementById('dynamicQConfigZone');
+      if (!zone) return;
       if (type === 'mcq') {
-        zone.innerHTML = \`
-          <input type="text" id="opt0" placeholder="Option A" class="w-full text-xs p-2 border rounded mb-1" required>
-          <input type="text" id="opt1" placeholder="Option B" class="w-full text-xs p-2 border rounded mb-1" required>
-          <input type="text" id="opt2" placeholder="Option C" class="w-full text-xs p-2 border rounded mb-1" required>
-          <input type="text" id="opt3" placeholder="Option D" class="w-full text-xs p-2 border rounded mb-2" required>
-          <label class="text-xs font-bold">Correct Option:</label>
-          <select id="correctIdx" class="text-xs p-1 border rounded ml-2">
-            <option value="0">Option A</option>
-            <option value="1">Option B</option>
-            <option value="2">Option C</option>
-            <option value="3">Option D</option>
-          </select>
-        \`;
+        zone.innerHTML = 
+          '<input type="text" id="opt0" placeholder="Option A" class="w-full text-xs p-2 border rounded mb-1" required>' +
+          '<input type="text" id="opt1" placeholder="Option B" class="w-full text-xs p-2 border rounded mb-1" required>' +
+          '<input type="text" id="opt2" placeholder="Option C" class="w-full text-xs p-2 border rounded mb-1" required>' +
+          '<input type="text" id="opt3" placeholder="Option D" class="w-full text-xs p-2 border rounded mb-2" required>' +
+          '<label class="text-xs font-bold">Correct Option:</label>' +
+          '<select id="correctIdx" class="text-xs p-1 border rounded ml-2">' +
+            '<option value="0">Option A</option>' +
+            '<option value="1">Option B</option>' +
+            '<option value="2">Option C</option>' +
+            '<option value="3">Option D</option>' +
+          '</select>';
       } else if (type === 'theory') {
-        zone.innerHTML = \`
-          <label class="text-xs font-bold block mb-1">Expected Keywords (comma-separated):</label>
-          <input type="text" id="theoryKw" placeholder="e.g. semaphore, mutual exclusion, deadlock" class="w-full text-xs p-2 border rounded" required>
-        \`;
+        zone.innerHTML = 
+          '<label class="text-xs font-bold block mb-1">Expected Keywords (comma-separated):</label>' +
+          '<input type="text" id="theoryKw" placeholder="e.g. semaphore, mutual exclusion, deadlock" class="w-full text-xs p-2 border rounded" required>';
       } else {
-        zone.innerHTML = \`
-          <input type="text" id="tcInput" placeholder='Test Input (e.g. "racecar")' class="w-full text-xs p-2 border rounded mb-1" required>
-          <input type="text" id="tcOutput" placeholder='Expected Output (e.g. True)' class="w-full text-xs p-2 border rounded" required>
-        \`;
+        zone.innerHTML = 
+          '<input type="text" id="tcInput" placeholder=\'Test Input (e.g. "racecar")\' class="w-full text-xs p-2 border rounded mb-1" required>' +
+          '<input type="text" id="tcOutput" placeholder=\'Expected Output (e.g. True)\' class="w-full text-xs p-2 border rounded" required>';
       }
     }
 
@@ -1380,41 +1396,41 @@ app.get('/', (req, res) => {
 
     function renderQuestionsTable() {
       const tb = document.getElementById('adminQuestionsTableBody');
+      if (!tb) return;
       tb.innerHTML = '';
       appState.questions.forEach((q, i) => {
         const id = q.id || q._id;
-        tb.innerHTML += \`
-          <tr>
-            <td class="py-2.5 font-mono">\${i + 1}</td>
-            <td class="py-2.5 uppercase font-bold text-blue-600 font-mono">\${q.type}</td>
-            <td class="py-2.5 max-w-xs truncate">\${q.prompt}</td>
-            <td class="py-2.5 font-bold">\${q.marks}</td>
-            <td class="py-2.5 text-right">
-              <button onclick="deleteQuestion('\${id}')" class="text-rose-500 hover:text-rose-700"><i class="fa-solid fa-trash"></i></button>
-            </td>
-          </tr>
-        \`;
+        tb.innerHTML += 
+          '<tr>' +
+            '<td class="py-2.5 font-mono">' + (i + 1) + '</td>' +
+            '<td class="py-2.5 uppercase font-bold text-blue-600 font-mono">' + q.type + '</td>' +
+            '<td class="py-2.5 max-w-xs truncate">' + q.prompt + '</td>' +
+            '<td class="py-2.5 font-bold">' + q.marks + '</td>' +
+            '<td class="py-2.5 text-right">' +
+              '<button onclick="deleteQuestion(\'' + id + '\')" class="text-rose-500 hover:text-rose-700"><i class="fa-solid fa-trash"></i></button>' +
+            '</td>' +
+          '</tr>';
       });
     }
 
     function renderSubmissionsTable() {
       const tb = document.getElementById('adminSubmissionsTableBody');
+      if (!tb) return;
       tb.innerHTML = '';
       appState.submissions.forEach(sub => {
         const id = sub.id || sub._id;
-        tb.innerHTML += \`
-          <tr>
-            <td class="py-2.5 font-mono font-bold">\${sub.rollNumber}</td>
-            <td class="py-2.5">\${sub.studentName}</td>
-            <td class="py-2.5 font-bold">\${sub.totalScore} / \${sub.maxScore}</td>
-            <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">\${sub.status}</span></td>
-            <td class="py-2.5 text-right">
-              <button onclick="openAuditModal('\${id}')" class="px-2.5 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold hover:bg-blue-100">
-                Review & Feedback
-              </button>
-            </td>
-          </tr>
-        \`;
+        tb.innerHTML += 
+          '<tr>' +
+            '<td class="py-2.5 font-mono font-bold">' + sub.rollNumber + '</td>' +
+            '<td class="py-2.5">' + sub.studentName + '</td>' +
+            '<td class="py-2.5 font-bold">' + sub.totalScore + ' / ' + sub.maxScore + '</td>' +
+            '<td class="py-2.5"><span class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700">' + sub.status + '</span></td>' +
+            '<td class="py-2.5 text-right">' +
+              '<button onclick="openAuditModal(\'' + id + '\')" class="px-2.5 py-1 bg-blue-50 text-blue-700 rounded text-xs font-bold hover:bg-blue-100">' +
+                'Review & Feedback' +
+              '</button>' +
+            '</td>' +
+          '</tr>';
       });
     }
 
@@ -1424,28 +1440,28 @@ app.get('/', (req, res) => {
       if (!sub) return;
 
       const container = document.getElementById('auditQuestionsContainer');
+      if (!container) return;
       container.innerHTML = '';
       (sub.breakdown || []).forEach((item, idx) => {
-        container.innerHTML += \`
-          <div class="p-3 bg-slate-50 border rounded-xl space-y-2 text-xs">
-            <div class="flex justify-between items-center">
-              <span class="font-bold">Q\${idx + 1}: \${item.prompt}</span>
-              <div class="flex items-center gap-1">
-                <label>Marks:</label>
-                <input type="number" id="auditMark_\${idx}" value="\${item.awardedMarks}" max="\${item.maxMarks}" class="w-14 p-1 border rounded font-mono font-bold text-center">
-                <span>/ \${item.maxMarks}</span>
-              </div>
-            </div>
-            <div class="p-2 bg-white rounded border">
-              <span class="text-slate-400 block text-[10px] uppercase font-bold">Student Answer:</span>
-              <pre class="font-mono text-xs whitespace-pre-wrap">\${item.studentAnswer || '(No answer)'}</pre>
-            </div>
-            <div>
-              <label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Teacher Feedback / Observation:</label>
-              <input type="text" id="auditFeed_\${idx}" value="\${item.facultyFeedback || ''}" placeholder="Write observation / comment for student..." class="w-full p-2 border rounded text-xs">
-            </div>
-          </div>
-        \`;
+        container.innerHTML += 
+          '<div class="p-3 bg-slate-50 border rounded-xl space-y-2 text-xs">' +
+            '<div class="flex justify-between items-center">' +
+              '<span class="font-bold">Q' + (idx + 1) + ': ' + item.prompt + '</span>' +
+              '<div class="flex items-center gap-1">' +
+                '<label>Marks:</label>' +
+                '<input type="number" id="auditMark_' + idx + '" value="' + item.awardedMarks + '" max="' + item.maxMarks + '" class="w-14 p-1 border rounded font-mono font-bold text-center">' +
+                '<span>/ ' + item.maxMarks + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div class="p-2 bg-white rounded border">' +
+              '<span class="text-slate-400 block text-[10px] uppercase font-bold">Student Answer:</span>' +
+              '<pre class="font-mono text-xs whitespace-pre-wrap">' + (item.studentAnswer || '(No answer)') + '</pre>' +
+            '</div>' +
+            '<div>' +
+              '<label class="block text-[10px] font-bold uppercase text-slate-500 mb-1">Teacher Feedback / Observation:</label>' +
+              '<input type="text" id="auditFeed_' + idx + '" value="' + (item.facultyFeedback || '') + '" placeholder="Write observation / comment for student..." class="w-full p-2 border rounded text-xs">' +
+            '</div>' +
+          '</div>';
       });
       toggleModal('submissionAuditModal');
     }
